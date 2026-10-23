@@ -1,0 +1,52 @@
+[project]
+name = "researchmind-ai"
+version = "0.1.0"
+description = "ResearchMind AI 2.0 - Foundation for a research intelligence platform."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "ResearchMind AI Team", email = "opensource@example.com" }
+]
+classifiers = [
+  "Framework :: FastAPI",
+  "Programming Language :: Python :: 3.11",
+  "License :: OSI Approved :: MIT License"
+]
+
+[project.dependencies]
+fastapi = "^0.111.1"
+uvicorn = "^0.23.2"
+pydantic = "^2.8.0"
+pydantic-settings = "^2.8.0"
+sqlalchemy = "^2.0.20"
+"psycopg[binary]" = "^3.4.0"
+httpx = "^0.26.3"
+
+[project.optional-dependencies]
+ml = [
+  "sentence-transformers>=2.2.0",
+  "transformers>=4.40.0"
+]
+
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 88
+exclude = [".git", "__pycache__", "build", "dist", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "C90", "Q"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = 3.11
+files = ["backend"]
+ignore_missing_imports = true
+strict = false
+
+[tool.coverage.run]
+branch = true
+source = ["backend/app"]

@@ -1,0 +1,37 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+.env
+.env.*
+.venv/
+venv/
+.idea/
+.vscode/
+.DS_Store
+*.log
+.coverage
+htmlcov/
+.nox/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.dist-info/
+build/
+dist/
+.pyrightcache/
+
+# Node & Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+*.local
+
+# Qdrant & Local data
+data/qdrant_storage/
+data/raw/
+data/processed/
+data/interim/
+
