@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import math
 from typing import Any, List, Optional, Tuple
@@ -20,6 +21,7 @@ class CrossEncoderReranker(RerankerProvider):
         self.model_name = model_name or settings.RERANKER_MODEL or "cross-encoder/ms-marco-MiniLM-L-6-v2"
         self._model = None
         self._load_attempted = False
+        self._model_timeout = 2.0
 
     def _get_model(self) -> Any:
         if self._model is not None:
@@ -70,16 +72,31 @@ class CrossEncoderReranker(RerankerProvider):
         if not documents:
             return []
 
-        model = self._get_model()
+        try:
+            model = await asyncio.wait_for(
+                asyncio.to_thread(self._get_model),
+                timeout=self._model_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Reranker model load timed out. Using lexical fallback.")
+            model = None
         if model is not None:
             try:
                 pairs = [[query, doc] for doc in documents]
-                scores = model.predict(pairs)
+                scores = await asyncio.wait_for(
+                    asyncio.to_thread(model.predict, pairs),
+                    timeout=self._model_timeout,
+                )
                 # Normalize scores to 0-1 range
                 if isinstance(scores, np.ndarray):
                     norm_scores = 1.0 / (1.0 + np.exp(-scores))
                     return norm_scores.tolist()
-                return [float(s) for s in scores]
+                return [
+                    max(0.0, min(1.0, 1.0 / (1.0 + math.exp(-float(s)))))
+                    for s in scores
+                ]
+            except asyncio.TimeoutError:
+                logger.warning("Reranker model inference timed out. Using lexical fallback.")
             except Exception as e:
                 logger.error(f"Error in CrossEncoder.predict: {e}. Using fallback.")
 

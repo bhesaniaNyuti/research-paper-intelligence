@@ -124,7 +124,10 @@ class QdrantVectorStore:
             for hit in search_result:
                 if hit.payload:
                     payload = dict(hit.payload)
-                    payload["semantic_score"] = float(hit.score)
+                    payload["semantic_score"] = round(
+                        max(0.0, min(1.0, float(hit.score))),
+                        4,
+                    )
                     papers.append(PaperOut(**payload))
             return papers
         except Exception as e:

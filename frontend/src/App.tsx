@@ -34,6 +34,47 @@ import {
   Filter,
 } from 'lucide-react';
 
+const renderInlineMarkdown = (text: string): React.ReactNode[] => {
+  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith('*') && part.endsWith('*')) {
+      return <em key={index}>{part.slice(1, -1)}</em>;
+    }
+    return <React.Fragment key={index}>{part}</React.Fragment>;
+  });
+};
+
+const MarkdownMessage: React.FC<{ content: string }> = ({ content }) => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+    {content.split('\n').map((line, index) => {
+      const trimmed = line.trim();
+      if (!trimmed) return <div key={index} style={{ height: '4px' }} />;
+
+      if (trimmed.startsWith('### ')) {
+        return (
+          <strong key={index} style={{ fontSize: '0.95rem', marginTop: '4px' }}>
+            {renderInlineMarkdown(trimmed.slice(4))}
+          </strong>
+        );
+      }
+
+      if (trimmed.startsWith('- ')) {
+        return (
+          <div key={index} style={{ paddingLeft: '14px' }}>
+            <span style={{ marginRight: '6px' }}>•</span>
+            {renderInlineMarkdown(trimmed.slice(2))}
+          </div>
+        );
+      }
+
+      return <div key={index}>{renderInlineMarkdown(line)}</div>;
+    })}
+  </div>
+);
+
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
   const [query, setQuery] = useState('');
@@ -41,6 +82,7 @@ export const App: React.FC = () => {
   const [papers, setPapers] = useState<Paper[]>([]);
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null);
   const [compareList, setCompareList] = useState<Paper[]>([]);
+  const [selectedGraphNode, setSelectedGraphNode] = useState<string | null>(null);
   const [isOnline, setIsOnline] = useState(true);
 
   // Filters (Faculty requirements: Last 2 years, specific year, journal)
@@ -55,6 +97,9 @@ export const App: React.FC = () => {
   const [compareData, setCompareData] = useState<CompareResponse | null>(null);
   const [compareLoading, setCompareLoading] = useState(false);
   const [targetCompareCount, setTargetCompareCount] = useState<number>(3);
+  const [compareChatMessages, setCompareChatMessages] = useState<ChatMessage[]>([]);
+  const [compareChatInput, setCompareChatInput] = useState('');
+  const [compareChatLoading, setCompareChatLoading] = useState(false);
 
   // Literature Survey state (Faculty requirement: Literature survey)
   const [surveyTopic, setSurveyTopic] = useState('');
@@ -150,6 +195,7 @@ export const App: React.FC = () => {
       return;
     }
     setCompareLoading(true);
+    setCompareChatMessages([]);
     try {
       const ids = compareList.slice(0, targetCompareCount).map((p) => p.id);
       const res = await comparePapers(ids);
@@ -158,6 +204,43 @@ export const App: React.FC = () => {
       console.error('Comparison failed', err);
     } finally {
       setCompareLoading(false);
+    }
+  };
+
+  const handleSendComparisonMessage = async (msgText: string) => {
+    const text = msgText.trim();
+    if (!text || compareChatLoading) return;
+
+    const selectedPapers = compareList.slice(0, targetCompareCount);
+    if (selectedPapers.length < 2) return;
+
+    const userMessage: ChatMessage = { role: 'user', content: text };
+    const history = [...compareChatMessages, userMessage];
+    setCompareChatMessages(history);
+    setCompareChatInput('');
+    setCompareChatLoading(true);
+
+    try {
+      const response = await chatWithPapers(
+        text,
+        selectedPapers.map((paper) => paper.id),
+        history
+      );
+      setCompareChatMessages((previous) => [
+        ...previous,
+        { role: 'assistant', content: response.answer },
+      ]);
+    } catch (err) {
+      console.error('Comparison chat failed', err);
+      setCompareChatMessages((previous) => [
+        ...previous,
+        {
+          role: 'assistant',
+          content: 'I could not compare these papers right now. Please try again.',
+        },
+      ]);
+    } finally {
+      setCompareChatLoading(false);
     }
   };
 
@@ -211,6 +294,22 @@ export const App: React.FC = () => {
       setChatLoading(false);
     }
   };
+
+  const graphPapers = (papers.length ? papers : compareList).slice(0, 8);
+  const fallbackTopics = ['Transformers', 'Medical Imaging', 'Deep Learning', 'Computer Vision', 'Healthcare'];
+  const graphTopics = graphPapers.length
+    ? Array.from(new Set(graphPapers.flatMap((paper) => paper.categories))).slice(0, 6)
+    : fallbackTopics;
+  const graphPaperNodes = graphPapers.map((paper, index) => ({
+    paper,
+    x: 690,
+    y: 70 + index * (graphPapers.length > 1 ? 390 / (graphPapers.length - 1) : 0),
+  }));
+  const graphTopicNodes = graphTopics.map((topic, index) => ({
+    topic,
+    x: 220,
+    y: 70 + index * (graphTopics.length > 1 ? 390 / (graphTopics.length - 1) : 0),
+  }));
 
   return (
     <div className="app-container">
@@ -480,18 +579,18 @@ export const App: React.FC = () => {
                       </h3>
                       <div className="paper-scores">
                         <div className="score-row">
-                          <span className="score-label">Semantic</span>
+                          <span className="score-label">Semantic relevance</span>
                           <span className="score-value highlight">
                             {paper.semantic_score !== undefined
-                              ? (paper.semantic_score * 10.0).toFixed(3)
+                              ? `${Math.round(Math.max(0, Math.min(1, paper.semantic_score)) * 100)}%`
                               : '—'}
                           </span>
                         </div>
                         <div className="score-row">
-                          <span className="score-label">Reranker</span>
+                          <span className="score-label">Reranker relevance</span>
                           <span className="score-value">
                             {paper.rerank_score !== undefined
-                              ? (paper.rerank_score * 2.0).toFixed(4)
+                              ? `${Math.round(Math.max(0, Math.min(1, paper.rerank_score)) * 100)}%`
                               : '—'}
                           </span>
                         </div>
@@ -636,7 +735,7 @@ export const App: React.FC = () => {
                         whiteSpace: 'pre-wrap',
                       }}
                     >
-                      {msg.content}
+                      <MarkdownMessage content={msg.content} />
                     </div>
                   </div>
                 ))}
@@ -956,6 +1055,112 @@ export const App: React.FC = () => {
                         </tbody>
                       </table>
                     </div>
+
+                    <div
+                      style={{
+                        marginTop: '24px',
+                        background: '#ffffff',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '12px',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <div
+                        style={{
+                          padding: '16px 20px',
+                          background: '#faf5ff',
+                          borderBottom: '1px solid #f3e8ff',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <BotMessageSquare size={19} color="#7c3aed" />
+                          <h3 style={{ margin: 0, fontSize: '1rem', color: '#4c1d95' }}>
+                            Chat about this comparison
+                          </h3>
+                        </div>
+                        <p style={{ margin: '6px 0 0', color: '#6b21a8', fontSize: '0.85rem' }}>
+                          Ask questions grounded in the {compareData.papers.length} papers shown above.
+                        </p>
+                      </div>
+
+                      <div
+                        style={{
+                          minHeight: '120px',
+                          maxHeight: '360px',
+                          padding: '16px 20px',
+                          overflowY: 'auto',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '12px',
+                        }}
+                      >
+                        {compareChatMessages.length === 0 && (
+                          <div style={{ color: '#64748b', fontSize: '0.88rem' }}>
+                            Try: “Which paper has the best efficiency trade-off?” or “Compare their limitations.”
+                          </div>
+                        )}
+                        {compareChatMessages.map((message, index) => (
+                          <div
+                            key={`${message.role}-${index}`}
+                            style={{
+                              alignSelf: message.role === 'user' ? 'flex-end' : 'flex-start',
+                              maxWidth: '85%',
+                              whiteSpace: 'pre-wrap',
+                              padding: '10px 14px',
+                              borderRadius: '10px',
+                              background: message.role === 'user' ? '#ede9fe' : '#f8fafc',
+                              color: '#1e293b',
+                              fontSize: '0.88rem',
+                              lineHeight: 1.55,
+                            }}
+                          >
+                            <MarkdownMessage content={message.content} />
+                          </div>
+                        ))}
+                        {compareChatLoading && (
+                          <div style={{ color: '#64748b', fontSize: '0.85rem' }}>
+                            <RefreshCw size={14} className="animate-spin" style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+                            Comparing the selected papers...
+                          </div>
+                        )}
+                      </div>
+
+                      <div
+                        style={{
+                          padding: '14px 16px',
+                          borderTop: '1px solid #e2e8f0',
+                          display: 'flex',
+                          gap: '10px',
+                        }}
+                      >
+                        <input
+                          type="text"
+                          placeholder="Ask about methods, results, limitations, or trade-offs..."
+                          value={compareChatInput}
+                          onChange={(event) => setCompareChatInput(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              handleSendComparisonMessage(compareChatInput);
+                            }
+                          }}
+                          style={{
+                            flex: 1,
+                            padding: '11px 14px',
+                            borderRadius: '8px',
+                            border: '1px solid #cbd5e1',
+                            outline: 'none',
+                          }}
+                        />
+                        <button
+                          className="btn-primary"
+                          onClick={() => handleSendComparisonMessage(compareChatInput)}
+                          disabled={compareChatLoading || !compareChatInput.trim()}
+                        >
+                          <Send size={16} />
+                          <span>Ask</span>
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -968,7 +1173,7 @@ export const App: React.FC = () => {
           <div>
             <h1 className="page-title">Knowledge Graph</h1>
             <p className="page-subtitle">
-              Visual map of topic clusters, co-citation connections, and foundational methodologies.
+              Explore relationships between your search results and their research topics.
             </p>
 
             <div
@@ -976,57 +1181,102 @@ export const App: React.FC = () => {
                 background: '#ffffff',
                 border: '1px solid #e2e8f0',
                 borderRadius: '12px',
-                padding: '40px',
-                minHeight: '450px',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
+                padding: '24px',
               }}
             >
-              <Network size={54} color="#6366f1" style={{ marginBottom: '16px' }} />
-              <h3 style={{ fontSize: '1.2rem', fontWeight: 600, color: '#0f172a', marginBottom: '8px' }}>
-                Interactive Research Graph
-              </h3>
-              <p
-                style={{
-                  color: '#64748b',
-                  fontSize: '0.9rem',
-                  maxWidth: '480px',
-                  textAlign: 'center',
-                  marginBottom: '24px',
-                }}
-              >
-                Connecting indexed landmark papers across core AI clusters: Transformers, Attention,
-                Diffusion Models, State Space Models (Mamba), and RLHF.
-              </p>
-              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                {[
-                  'Attention is All You Need',
-                  'Mamba State Space',
-                  'RAG Passage Retrieval',
-                  'Vision Transformers',
-                  'Direct Preference Opt',
-                ].map((node) => (
-                  <div
-                    key={node}
-                    style={{
-                      background: '#eef2ff',
-                      border: '1px solid #c7d2fe',
-                      color: '#4338ca',
-                      padding: '8px 16px',
-                      borderRadius: '20px',
-                      fontSize: '0.85rem',
-                      fontWeight: 600,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                    }}
-                  >
-                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#6366f1' }} />
-                    {node}
-                  </div>
-                ))}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#4338ca', fontSize: '0.85rem' }}>
+                  <Network size={18} />
+                  <span>{graphPapers.length ? `Showing ${graphPapers.length} search papers` : 'Example topic map'}</span>
+                </div>
+                {!graphPapers.length && (
+                  <button className="btn-secondary" onClick={() => setCurrentTab('search')}>
+                    Search papers to populate graph
+                  </button>
+                )}
+              </div>
+
+              <div style={{ overflowX: 'auto' }}>
+                <svg viewBox="0 0 1000 500" width="100%" role="img" aria-label="Interactive research knowledge graph">
+                  {graphPaperNodes.flatMap(({ paper, x, y }) =>
+                    graphTopicNodes
+                      .filter(({ topic }) => !graphPapers.length || paper.categories.includes(topic))
+                      .map(({ topic, x: topicX, y: topicY }) => (
+                        <line
+                          key={`${paper.id}-${topic}`}
+                          x1={topicX + 95}
+                          y1={topicY}
+                          x2={x - 105}
+                          y2={y}
+                          stroke="#cbd5e1"
+                          strokeWidth="2"
+                        />
+                      ))
+                  )}
+
+                  {graphTopicNodes.map(({ topic, x, y }) => {
+                    const active = selectedGraphNode === topic;
+                    const topicLabel = topic.length > 24 ? `${topic.slice(0, 23)}…` : topic;
+                    return (
+                      <g
+                        key={topic}
+                        onClick={() => {
+                          setSelectedGraphNode(topic);
+                          if (!graphPapers.length) handleSearch(topic);
+                        }}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        <rect
+                          x={x - 95}
+                          y={y - 26}
+                          width="190"
+                          height="52"
+                          rx="26"
+                          fill={active ? '#4f46e5' : '#6366f1'}
+                        />
+                        <text x={x} y={y + 4} textAnchor="middle" fill="#ffffff" fontSize="12" fontWeight="700">
+                          {topicLabel}
+                        </text>
+                      </g>
+                    );
+                  })}
+
+                  {graphPaperNodes.map(({ paper, x, y }) => {
+                    const active = selectedGraphNode === paper.id;
+                    const titleLabel = paper.title.length > 30 ? `${paper.title.slice(0, 29)}…` : paper.title;
+                    return (
+                      <g
+                        key={paper.id}
+                        onClick={() => {
+                          setSelectedGraphNode(paper.id);
+                          setSelectedPaper(paper);
+                        }}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        <rect
+                          x={x - 105}
+                          y={y - 28}
+                          width="210"
+                          height="56"
+                          rx="12"
+                          fill={active ? '#ede9fe' : '#f8fafc'}
+                          stroke={active ? '#7c3aed' : '#cbd5e1'}
+                          strokeWidth={active ? '3' : '2'}
+                        />
+                        <text x={x} y={y - 3} textAnchor="middle" fill="#1e293b" fontSize="12" fontWeight="600">
+                          {titleLabel}
+                        </text>
+                        <text x={x} y={y + 16} textAnchor="middle" fill="#64748b" fontSize="11">
+                          {paper.year || 'Publication year unavailable'}
+                        </text>
+                      </g>
+                    );
+                  })}
+                </svg>
+              </div>
+
+              <div style={{ marginTop: '8px', color: '#64748b', fontSize: '0.82rem', textAlign: 'center' }}>
+                Click a topic to search it, or click a paper node to open its details.
               </div>
             </div>
           </div>

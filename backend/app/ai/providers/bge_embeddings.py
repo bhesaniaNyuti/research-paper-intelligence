@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 from typing import Any, List, Optional
@@ -24,6 +25,7 @@ class BGEEmbeddingProvider(EmbeddingProvider):
         self._dim = dimension
         self._model = None
         self._load_attempted = False
+        self._model_timeout = 2.0
 
     def _get_model(self) -> Any:
         if self._model is not None:
@@ -76,22 +78,51 @@ class BGEEmbeddingProvider(EmbeddingProvider):
         return vec.tolist()
 
     async def embed_text(self, text: str, **kwargs: Any) -> List[float]:
-        model = self._get_model()
+        try:
+            model = await asyncio.wait_for(
+                asyncio.to_thread(self._get_model),
+                timeout=self._model_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Embedding model load timed out. Using feature projection fallback.")
+            model = None
         if model is not None:
             try:
-                emb = model.encode(text, normalize_embeddings=True)
+                emb = await asyncio.wait_for(
+                    asyncio.to_thread(model.encode, text, normalize_embeddings=True),
+                    timeout=self._model_timeout,
+                )
                 return emb.tolist()
+            except asyncio.TimeoutError:
+                logger.warning("Embedding model inference timed out. Using feature projection fallback.")
             except Exception as e:
                 logger.error(f"Error in model.encode: {e}. Falling back.")
 
         return self._fallback_embed(text)
 
     async def embed_documents(self, documents: List[str], **kwargs: Any) -> List[List[float]]:
-        model = self._get_model()
+        try:
+            model = await asyncio.wait_for(
+                asyncio.to_thread(self._get_model),
+                timeout=self._model_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Embedding model load timed out. Using feature projection fallback.")
+            model = None
         if model is not None:
             try:
-                embs = model.encode(documents, normalize_embeddings=True, batch_size=32)
+                embs = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        model.encode,
+                        documents,
+                        normalize_embeddings=True,
+                        batch_size=32,
+                    ),
+                    timeout=self._model_timeout,
+                )
                 return embs.tolist()
+            except asyncio.TimeoutError:
+                logger.warning("Embedding model inference timed out. Using feature projection fallback.")
             except Exception as e:
                 logger.error(f"Error in batch model.encode: {e}. Falling back.")
 

@@ -137,7 +137,10 @@ class SearchService:
             rerank_scores = await self.reranker.score_pairs(query_text, doc_texts)
 
             for paper, r_score in zip(top_candidates, rerank_scores):
-                paper.rerank_score = round(float(r_score), 4)
+                paper.rerank_score = round(
+                    max(0.0, min(1.0, float(r_score))),
+                    4,
+                )
 
             # Sort by rerank score descending
             top_candidates.sort(key=lambda p: (p.rerank_score or 0.0), reverse=True)
